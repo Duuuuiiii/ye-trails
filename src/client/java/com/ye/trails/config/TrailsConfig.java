@@ -64,6 +64,11 @@ public final class TrailsConfig {
     public int radarSize = 116;
     public int radarChunkPx = 6; // pixels per chunk on minimap
 
+    // Keybinds (customizable inside F7 UI; F9 belongs to ye-mod)
+    public int menuKey = org.lwjgl.glfw.GLFW.GLFW_KEY_F7;
+    public int mapKey = org.lwjgl.glfw.GLFW.GLFW_KEY_P;
+    public int toggleKey = -1;
+
     // Persistence
     public boolean saveToDisk = true;
 

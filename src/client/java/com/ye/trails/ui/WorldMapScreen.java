@@ -437,7 +437,7 @@ public class WorldMapScreen extends Screen {
             camBlockZ = minecraft.player.getZ();
             return true;
         }
-        if (key == GLFW.GLFW_KEY_O || key == GLFW.GLFW_KEY_ESCAPE) {
+        if (key == TrailsConfig.get().mapKey || key == GLFW.GLFW_KEY_ESCAPE) {
             onClose();
             return true;
         }
