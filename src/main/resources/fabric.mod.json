@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "ye-trails",
+  "version": "${version}",
+  "name": "Ye Trails",
+  "description": "3c3u / 1.21.11 Chunk Trail & Player Path Detector (Palette + OldGen + Liquid + 2D Radar)",
+  "authors": [
+    "ye"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "accessWidener": "ye-trails.accesswidener",
+  "entrypoints": {
+    "client": [
+      "com.ye.trails.YeTrailsClient"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "ye-trails.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.ye.trails.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientPacketListenerMixin",
+    "PalettedContainerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
