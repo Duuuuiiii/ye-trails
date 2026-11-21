@@ -20,6 +20,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.HashMapPalette;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.LinearPalette;
 import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
@@ -360,102 +361,112 @@ public final class ChunkTrailEngine {
             }
         }
 
-        // 2. PaletteExploit (1.18 - 1.21+ core detection)
+        // 2. PaletteExploit (1.18 - 1.21.11 XaeroPlus-grade Biome + Linear/HashMap Palette detection)
         if (cfg.paletteExploit) {
-            int nonAirSections = 0;
-            int newChunkQuantifier = 0;
-            int oldChunkQuantifier = 0;
+            // 2a. Overworld Biome Palette check on section 0
+            if (dim == Level.OVERWORLD && sections.length > 0) {
+                PalettedContainerRO<Holder<Biome>> biomesRO = sections[0].getBiomes();
+                if (biomesRO instanceof PalettedContainer<Holder<Biome>> biomesContainer) {
+                    Palette<Holder<Biome>> biomePalette = ((PaletteAccess<Holder<Biome>>) biomesContainer).ye$getPalette();
+                    boolean hasPlains = false;
+                    for (int i = 0; i < biomePalette.getSize(); i++) {
+                        if (biomePalette.valueFor(i).unwrapKey().map(k -> k == Biomes.PLAINS).orElse(false)) {
+                            hasPlains = true;
+                            break;
+                        }
+                    }
+                    if (hasPlains) {
+                        if (biomePalette.getSize() == 1) {
+                            return ChunkType.NEW;
+                        }
+                        var bStorage = ((PaletteAccess<Holder<Biome>>) biomesContainer).ye$getStorage();
+                        boolean plainsUsed = false;
+                        int bLen = bStorage.getSize();
+                        for (int idx = 0; idx < bLen; idx++) {
+                            int id = bStorage.get(idx);
+                            if (id >= 0 && id < biomePalette.getSize()
+                                    && biomePalette.valueFor(id).unwrapKey().map(k -> k == Biomes.PLAINS).orElse(false)) {
+                                plainsUsed = true;
+                                break;
+                            }
+                        }
+                        if (!plainsUsed) {
+                            return ChunkType.NEW;
+                        }
+                    }
+                }
+            }
+
+            // 2b. BlockState Palette check (>= 3 sections with new-chunk palette structure)
+            int newSections = 0;
             boolean beingUpdated = false;
-            boolean endMarkedNew = false;
+            int sectionIndex = 0;
 
             for (LevelChunkSection section : sections) {
-                if (section == null) continue;
+                if (section == null || section.hasOnlyAir()) {
+                    sectionIndex++;
+                    continue;
+                }
 
-                int isNewSection = 0;
-                int isBeingUpdatedSection = 0;
+                PalettedContainer<BlockState> container = section.getStates();
+                Palette<BlockState> palette = ((PaletteAccess<BlockState>) container).ye$getPalette();
+                var storage = ((PaletteAccess<BlockState>) container).ye$getStorage();
+                int paletteSize = palette.getSize();
 
-                if (!section.hasOnlyAir()) {
-                    PalettedContainer<BlockState> container = section.getStates();
-                    Palette<BlockState> palette = ((PaletteAccess<BlockState>) container).ye$getPalette();
-                    int paletteSize = palette.getSize();
-
-                    if (palette instanceof HashMapPalette<BlockState>) {
-                        var storage = ((PaletteAccess<BlockState>) container).ye$getStorage();
-                        boolean[] seen = new boolean[paletteSize];
-                        int uniqueSize = 0;
-                        int total = storage.getSize();
-                        for (int idx = 0; idx < total; idx++) {
-                            int id = storage.get(idx);
-                            if (id >= 0 && id < paletteSize && !seen[id]) {
-                                seen[id] = true;
-                                uniqueSize++;
-                                if (uniqueSize >= paletteSize) break;
-                            }
-                        }
-                        if (uniqueSize <= 1) uniqueSize = paletteSize;
-                        if (uniqueSize < paletteSize) {
-                            isNewSection = 2;
-                        }
-                    }
-
+                if (cfg.beingUpdatedDetector && sectionIndex == 4 && dim == Level.OVERWORLD) {
                     for (int i = 0; i < paletteSize; i++) {
-                        Block b = palette.valueFor(i).getBlock();
-                        if (i == 0 && b == Blocks.AIR && dim != Level.NETHER && dim != Level.END) {
-                            isNewSection++;
-                        }
-                        if (i == 1 && (b == Blocks.WATER || b == Blocks.STONE || b == Blocks.GRASS_BLOCK || b == Blocks.SNOW_BLOCK)
-                                && dim != Level.NETHER && dim != Level.END) {
-                            isNewSection++;
-                        }
-                        if (i == 2 && (b == Blocks.SNOW_BLOCK || b == Blocks.DIRT || b == Blocks.POWDER_SNOW)
-                                && dim != Level.NETHER && dim != Level.END) {
-                            isNewSection++;
-                        }
-                        if (nonAirSections == 4 && b == Blocks.BEDROCK && dim != Level.NETHER && dim != Level.END) {
-                            if (cfg.beingUpdatedDetector) {
-                                beingUpdated = true;
-                            }
-                        }
-                        if (b == Blocks.AIR && (dim == Level.NETHER || dim == Level.END)) {
-                            isBeingUpdatedSection++;
-                        }
-                    }
-
-                    if (isBeingUpdatedSection >= 2) oldChunkQuantifier++;
-                    if (isNewSection >= 2) newChunkQuantifier++;
-                    nonAirSections++;
-                }
-
-                if (dim == Level.END) {
-                    PalettedContainerRO<Holder<Biome>> biomesRO = section.getBiomes();
-                    if (biomesRO instanceof PalettedContainer<Holder<Biome>> biomesContainer) {
-                        Palette<Holder<Biome>> biomePalette = ((PaletteAccess<Holder<Biome>>) biomesContainer).ye$getPalette();
-                        if (biomePalette.getSize() > 0 && biomePalette.valueFor(0).unwrapKey().map(k -> k == Biomes.PLAINS).orElse(false)) {
-                            endMarkedNew = true;
+                        if (palette.valueFor(i).getBlock() == Blocks.BEDROCK) {
+                            beingUpdated = true;
+                            break;
                         }
                     }
                 }
+
+                if (palette instanceof LinearPalette<BlockState>) {
+                    // Freshly generated chunks keep LinearPalette IDs in natural worldgen encounter order
+                    int maxSeen = -1;
+                    boolean outOfOrder = false;
+                    int total = storage.getSize();
+                    for (int idx = 0; idx < total; idx++) {
+                        int id = storage.get(idx);
+                        if (id > maxSeen + 1) {
+                            outOfOrder = true;
+                            break;
+                        }
+                        if (id > maxSeen) {
+                            maxSeen = id;
+                        }
+                    }
+                    if (outOfOrder || maxSeen + 1 < paletteSize) {
+                        newSections++;
+                    }
+                } else if (palette instanceof HashMapPalette<BlockState>) {
+                    boolean[] seen = new boolean[paletteSize];
+                    int uniqueSize = 0;
+                    int total = storage.getSize();
+                    for (int idx = 0; idx < total; idx++) {
+                        int id = storage.get(idx);
+                        if (id >= 0 && id < paletteSize && !seen[id]) {
+                            seen[id] = true;
+                            uniqueSize++;
+                            if (uniqueSize >= paletteSize) break;
+                        }
+                    }
+                    if (uniqueSize < paletteSize) {
+                        newSections++;
+                    }
+                }
+
+                if (newSections >= 3) {
+                    return ChunkType.NEW;
+                }
+                sectionIndex++;
             }
 
             if (beingUpdated) {
                 return ChunkType.UPDATING;
             }
-
-            if (nonAirSections > 0) {
-                if (dim == Level.NETHER || dim == Level.END) {
-                    double pct = ((double) oldChunkQuantifier / nonAirSections) * 100.0;
-                    if (cfg.beingUpdatedDetector && pct >= 25.0) {
-                        return ChunkType.UPDATING;
-                    }
-                    if (dim == Level.END && endMarkedNew) {
-                        return ChunkType.NEW;
-                    }
-                    return ChunkType.OLD;
-                } else {
-                    double pct = ((double) newChunkQuantifier / nonAirSections) * 100.0;
-                    return pct >= 51.0 ? ChunkType.NEW : ChunkType.OLD;
-                }
-            }
+            return ChunkType.OLD;
         }
 
         return null;
@@ -466,6 +477,7 @@ public final class ChunkTrailEngine {
         ChunkType prev = CHUNK_MAP.putIfAbsent(packed, type);
         if (prev != null) return;
 
+        TerrainRegionCache.updateChunkOverlay(cx, cz, type);
         recount();
 
         if (persist && !activeContextKey.isEmpty()) {
@@ -531,6 +543,7 @@ public final class ChunkTrailEngine {
                         ChunkType type = ChunkType.valueOf(parts[2]);
                         if (contextKey.equals(activeContextKey)) {
                             CHUNK_MAP.putIfAbsent(ChunkPos.asLong(x, z), type);
+                            TerrainRegionCache.updateChunkOverlay(x, z, type);
                         }
                     }
                 } catch (Exception e) {

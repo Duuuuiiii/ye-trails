@@ -10,10 +10,9 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.world.level.ChunkPos;
 
-import java.util.Map;
-
 /**
- * Customizable 2D minimap showing real terrain, chunk trails, purple portal chunk borders, and waypoints.
+ * Clean 2D minimap showing terrain, red new-chunk overlay (old trails stay natural terrain color),
+ * purple portal chunk borders, and waypoints — with no bottom text clutter.
  */
 public final class TrailRadarHud {
     private TrailRadarHud() {}
@@ -26,7 +25,6 @@ public final class TrailRadarHud {
 
         int size = Math.max(72, Math.min(240, cfg.radarSize));
         int cell = Math.max(2, Math.min(16, cfg.radarChunkPx));
-        int footerH = 16;
 
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
@@ -37,16 +35,15 @@ public final class TrailRadarHud {
         };
         int y = switch (cfg.radarAnchor) {
             case TOP_LEFT, TOP_RIGHT -> cfg.radarOffsetY;
-            case BOTTOM_LEFT, BOTTOM_RIGHT -> screenH - (size + footerH) - cfg.radarOffsetY;
+            case BOTTOM_LEFT, BOTTOM_RIGHT -> screenH - size - cfg.radarOffsetY;
         };
 
         x = Math.max(2, Math.min(screenW - size - 2, x));
-        y = Math.max(2, Math.min(screenH - size - footerH - 2, y));
+        y = Math.max(2, Math.min(screenH - size - 2, y));
 
-        // Container
-        g.fill(x, y, x + size, y + size + footerH, 0xCC0D1118);
-        g.renderOutline(x, y, size, size + footerH, 0xFF252D3D);
-        g.fill(x, y, x + size, y + 2, 0xFF22D3EE);
+        // Clean container (no bottom text)
+        g.fill(x, y, x + size, y + size, 0xCC0D1118);
+        g.renderOutline(x, y, size, size, 0xFF252D3D);
 
         int centerX = x + size / 2;
         int centerY = y + size / 2;
@@ -56,51 +53,48 @@ public final class TrailRadarHud {
         int playerCz = mc.player.chunkPosition().z;
         int chunkRadius = (size / 2) / cell + 2;
 
-        g.enableScissor(x + 1, y + 2, x + size - 1, y + size);
+        g.enableScissor(x + 1, y + 1, x + size - 1, y + size - 1);
 
-        // 1. Real terrain layer
-        if (cfg.showTerrainOnMap) {
-            int regionPx = TerrainRegionCache.CHUNKS_PER_REGION * cell;
-            for (TerrainRegionCache.RegionTile tile : TerrainRegionCache.getRegions()) {
-                int rStartCx = tile.rx * TerrainRegionCache.CHUNKS_PER_REGION;
-                int rStartCz = tile.rz * TerrainRegionCache.CHUNKS_PER_REGION;
-                int rxScreen = (int) Math.round(centerX + (rStartCx - playerChunkX) * cell);
-                int rzScreen = (int) Math.round(centerY + (rStartCz - playerChunkZ) * cell);
-                if (rxScreen + regionPx < x || rxScreen > x + size || rzScreen + regionPx < y || rzScreen > y + size) {
-                    continue;
-                }
-                tile.uploadIfDirty();
+        int regionPx = TerrainRegionCache.CHUNKS_PER_REGION * cell;
+        for (TerrainRegionCache.RegionTile tile : TerrainRegionCache.getRegions()) {
+            int rStartCx = tile.rx * TerrainRegionCache.CHUNKS_PER_REGION;
+            int rStartCz = tile.rz * TerrainRegionCache.CHUNKS_PER_REGION;
+            int rxScreen = (int) Math.round(centerX + (rStartCx - playerChunkX) * cell);
+            int rzScreen = (int) Math.round(centerY + (rStartCz - playerChunkZ) * cell);
+            if (rxScreen + regionPx < x || rxScreen > x + size || rzScreen + regionPx < y || rzScreen > y + size) {
+                continue;
+            }
+            tile.uploadIfDirty();
+            if (cfg.showTerrainOnMap) {
                 g.blit(RenderPipelines.GUI_TEXTURED, tile.textureId,
                         rxScreen, rzScreen, 0.0F, 0.0F,
                         regionPx, regionPx,
                         TerrainRegionCache.REGION_PIXELS, TerrainRegionCache.REGION_PIXELS,
                         TerrainRegionCache.REGION_PIXELS, TerrainRegionCache.REGION_PIXELS);
             }
+            if (cfg.showNewChunks) {
+                g.blit(RenderPipelines.GUI_TEXTURED, tile.overlayTextureId,
+                        rxScreen, rzScreen, 0.0F, 0.0F,
+                        regionPx, regionPx,
+                        TerrainRegionCache.CHUNKS_PER_REGION, TerrainRegionCache.CHUNKS_PER_REGION,
+                        TerrainRegionCache.CHUNKS_PER_REGION, TerrainRegionCache.CHUNKS_PER_REGION);
+            }
         }
 
-        // 2. Chunk trail overlay & 3. Purple border for portal chunks (O(visible) grid lookup)
-        Map<Long, ChunkTrailEngine.ChunkType> chunks = ChunkTrailEngine.getChunks();
-        for (int cz = playerCz - chunkRadius; cz <= playerCz + chunkRadius; cz++) {
-            for (int cx = playerCx - chunkRadius; cx <= playerCx + chunkRadius; cx++) {
-                long packed = ChunkPos.asLong(cx, cz);
-                ChunkTrailEngine.ChunkType type = chunks.get(packed);
-                int px = (int) Math.round(centerX + (cx - playerChunkX) * cell);
-                int py = (int) Math.round(centerY + (cz - playerChunkZ) * cell);
-
-                if (type != null && TrailWorldRenderer.shouldShow(type, cfg)) {
-                    int alpha = cfg.showTerrainOnMap
-                            ? (type == ChunkTrailEngine.ChunkType.NEW ? 0x38000000 : 0x6E000000)
-                            : (type == ChunkTrailEngine.ChunkType.NEW ? 0x55000000 : 0xCC000000);
-                    g.fill(px, py, px + cell, py + cell, alpha | TrailWorldRenderer.colorFor(type));
-                }
-
-                if (cfg.highlightPortals && ChunkTrailEngine.hasPortal(packed)) {
-                    g.renderOutline(px, py, Math.max(3, cell), Math.max(3, cell), 0xFF000000 | TrailWorldRenderer.PORTAL_RGB);
+        // Purple border ONLY on chunks containing Nether Portals
+        if (cfg.highlightPortals) {
+            for (int cz = playerCz - chunkRadius; cz <= playerCz + chunkRadius; cz++) {
+                for (int cx = playerCx - chunkRadius; cx <= playerCx + chunkRadius; cx++) {
+                    if (ChunkTrailEngine.hasPortal(ChunkPos.asLong(cx, cz))) {
+                        int px = (int) Math.round(centerX + (cx - playerChunkX) * cell);
+                        int py = (int) Math.round(centerY + (cz - playerChunkZ) * cell);
+                        g.renderOutline(px, py, Math.max(3, cell), Math.max(3, cell), 0xFF000000 | TrailWorldRenderer.PORTAL_RGB);
+                    }
                 }
             }
         }
 
-        // 4. Waypoints
+        // Waypoints
         if (cfg.showWaypoints) {
             for (WaypointManager.Waypoint wp : WaypointManager.getAll()) {
                 if (!wp.enabled) continue;
@@ -113,7 +107,7 @@ public final class TrailRadarHud {
             }
         }
 
-        // 5. Player crosshair & facing dot
+        // Player crosshair & facing dot
         g.fill(centerX - 1, centerY - 1, centerX + 2, centerY + 2, 0xFFFFFFFF);
         double yawRad = Math.toRadians(mc.player.getYRot());
         int dirX = (int) Math.round(-Math.sin(yawRad) * 5.0);
@@ -121,10 +115,5 @@ public final class TrailRadarHud {
         g.fill(centerX + dirX - 1, centerY + dirZ - 1, centerX + dirX + 1, centerY + dirZ + 1, 0xFF38BDF8);
 
         g.disableScissor();
-
-        // Footer stats
-        g.fill(x + 1, y + size, x + size - 1, y + size + 1, 0xFF252D3D);
-        String stats = "路径:" + ChunkTrailEngine.getOldCount() + " 门:" + ChunkTrailEngine.getPortalCount();
-        g.drawString(mc.font, stats, x + 5, y + size + 4, 0xFFE2E8F0, false);
     }
 }

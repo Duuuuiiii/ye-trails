@@ -43,7 +43,7 @@ public class YeTrailsClient implements ClientModInitializer {
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
                 "key.ye_trails.toggle",
                 InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_F8,
+                GLFW.GLFW_KEY_F9,
                 category
         ));
         mapKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(

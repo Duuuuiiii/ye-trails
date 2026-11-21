@@ -20,7 +20,7 @@ import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
- * Compact modern floating settings modal for Ye Trails (default F7).
+ * Clean 3-tab settings modal for Ye Trails (default F7).
  */
 public class TrailsSettingsScreen extends Screen {
     private static final int BG_BACKDROP = 0x7006080E;
@@ -32,63 +32,56 @@ public class TrailsSettingsScreen extends Screen {
     private static final int TEXT_MUTED = 0xFF94A3B8;
     private static final int TOGGLE_OFF = 0xFF2A3346;
 
+    private int activeTab = 0;
+    private static final String[] TABS = {"地图与小地图", "检测与显示", "数据管理"};
+
     private final List<Item> items = new ArrayList<>();
     private int panelX, panelY, panelW, panelH;
-    private int scroll = 0;
     private SliderItem draggingSlider = null;
 
     public TrailsSettingsScreen() {
         super(Component.literal("Ye Trails Settings"));
-        buildItems();
+        rebuildTab();
     }
 
-    private void buildItems() {
+    private void rebuildTab() {
         TrailsConfig c = TrailsConfig.get();
         items.clear();
-        items.add(new ToggleItem("显示路径与雷达画面 (F8 · 后台始终检测)", () -> c.showVisuals, v -> c.showVisuals = v));
-        items.add(new ToggleItem("显示右上/角落 2D 路径小地图", () -> c.showRadar, v -> c.showRadar = v));
-        items.add(new CycleItem("小地图停靠角落", () -> c.radarAnchor.getLabel(), () -> {
-            TrailsConfig.RadarAnchor[] vals = TrailsConfig.RadarAnchor.values();
-            c.radarAnchor = vals[(c.radarAnchor.ordinal() + 1) % vals.length];
-        }));
-        items.add(new SliderItem("小地图水平边距 X", () -> c.radarOffsetX, v -> c.radarOffsetX = (int) Math.round(v), 0.0, 400.0, 2.0));
-        items.add(new SliderItem("小地图垂直边距 Y", () -> c.radarOffsetY, v -> c.radarOffsetY = (int) Math.round(v), 0.0, 300.0, 2.0));
-        items.add(new SliderItem("小地图尺寸 (像素)", () -> c.radarSize, v -> c.radarSize = (int) Math.round(v), 72.0, 240.0, 4.0));
-        items.add(new SliderItem("小地图缩放 (像素/区块)", () -> c.radarChunkPx, v -> c.radarChunkPx = (int) Math.round(v), 2.0, 16.0, 1.0));
 
-        items.add(new ToggleItem("地图显示真实地形", () -> c.showTerrainOnMap, v -> c.showTerrainOnMap = v));
-        items.add(new ToggleItem("地狱门区块紫色边缘高亮", () -> c.highlightPortals, v -> c.highlightPortals = v));
-        items.add(new ToggleItem("显示路径点 (地图 & 3D 信标)", () -> c.showWaypoints, v -> c.showWaypoints = v));
-
-        items.add(new ToggleItem("3D 地面色块与边框渲染", () -> c.render3D, v -> c.render3D = v));
-        items.add(new ToggleItem("3D 渲染高度跟随脚下", () -> c.followPlayerY, v -> c.followPlayerY = v));
-        items.add(new SliderItem("脚下高度偏移 (Y)", () -> c.followYOffset, v -> c.followYOffset = v, -16.0, 16.0, 0.5));
-        items.add(new SliderItem("固定渲染高度 (不跟随时)", () -> c.renderY, v -> c.renderY = v, -64.0, 320.0, 1.0));
-        items.add(new SliderItem("3D 渲染半径 (区块)", () -> c.renderRadius, v -> c.renderRadius = (int) Math.round(v), 4.0, 32.0, 1.0));
-        items.add(new SliderItem("3D 色块透明度", () -> c.fillAlpha, v -> c.fillAlpha = v, 0.0, 0.85, 0.05));
-
-        items.add(new ToggleItem("显示玩家路径 (老区块 · 青色)", () -> c.showOldChunks, v -> c.showOldChunks = v));
-        items.add(new ToggleItem("显示远古路径 (老版本 · 紫色)", () -> c.showOldGenChunks, v -> c.showOldGenChunks = v));
-        items.add(new ToggleItem("显示更新中区块 (黄色)", () -> c.showUpdatingChunks, v -> c.showUpdatingChunks = v));
-        items.add(new ToggleItem("显示全新区块 (未探索 · 红色)", () -> c.showNewChunks, v -> c.showNewChunks = v));
-
-        items.add(new ToggleItem("Palette 调色板核心检测 (1.21)", () -> c.paletteExploit, v -> c.paletteExploit = v));
-        items.add(new ToggleItem("老版本远古区块检测 (<1.17/1.16)", () -> c.oldGenDetector, v -> c.oldGenDetector = v));
-        items.add(new ToggleItem("旧版升级更新中区块检测", () -> c.beingUpdatedDetector, v -> c.beingUpdatedDetector = v));
-        items.add(new ToggleItem("流体流动辅助检测", () -> c.liquidExploit, v -> c.liquidExploit = v));
-        items.add(new ToggleItem("本地按服务器/维度保存路径与地形", () -> c.saveToDisk, v -> c.saveToDisk = v));
-
-        items.add(new ButtonItem("打开全屏路径大地图 (O)", () -> {
-            if (minecraft != null) minecraft.setScreen(new WorldMapScreen());
-        }));
-        items.add(new ButtonItem("清空当前维度路径与地形缓存", ChunkTrailEngine::clearCurrentData));
-        items.add(new ButtonItem("打开数据文件夹", () -> Util.getPlatform().openPath(TrailsConfig.getBaseDir())));
+        if (activeTab == 0) {
+            items.add(new ToggleItem("显示小地图与地图画面 (F9)", () -> c.showVisuals, v -> c.showVisuals = v));
+            items.add(new ToggleItem("显示 2D 路径小地图", () -> c.showRadar, v -> c.showRadar = v));
+            items.add(new CycleItem("小地图停靠角落", () -> c.radarAnchor.getLabel(), () -> {
+                TrailsConfig.RadarAnchor[] vals = TrailsConfig.RadarAnchor.values();
+                c.radarAnchor = vals[(c.radarAnchor.ordinal() + 1) % vals.length];
+            }));
+            items.add(new SliderItem("小地图水平边距 X", () -> c.radarOffsetX, v -> c.radarOffsetX = (int) Math.round(v), 0.0, 400.0, 2.0));
+            items.add(new SliderItem("小地图垂直边距 Y", () -> c.radarOffsetY, v -> c.radarOffsetY = (int) Math.round(v), 0.0, 300.0, 2.0));
+            items.add(new SliderItem("小地图尺寸 (像素)", () -> c.radarSize, v -> c.radarSize = (int) Math.round(v), 72.0, 240.0, 4.0));
+            items.add(new SliderItem("小地图缩放 (像素/区块)", () -> c.radarChunkPx, v -> c.radarChunkPx = (int) Math.round(v), 2.0, 16.0, 1.0));
+            items.add(new ButtonItem("打开全屏路径大地图 (O)", () -> {
+                if (minecraft != null) minecraft.setScreen(new WorldMapScreen());
+            }));
+        } else if (activeTab == 1) {
+            items.add(new ToggleItem("地图显示真实地形", () -> c.showTerrainOnMap, v -> c.showTerrainOnMap = v));
+            items.add(new ToggleItem("新区块红色标出 (老路径保持原色)", () -> c.showNewChunks, v -> c.showNewChunks = v));
+            items.add(new ToggleItem("地狱门区块紫色边缘高亮", () -> c.highlightPortals, v -> c.highlightPortals = v));
+            items.add(new ToggleItem("显示路径点 (地图 & 信标)", () -> c.showWaypoints, v -> c.showWaypoints = v));
+            items.add(new ToggleItem("Palette 调色板核心检测 (1.21)", () -> c.paletteExploit, v -> c.paletteExploit = v));
+            items.add(new ToggleItem("老版本远古区块检测 (<1.17/1.16)", () -> c.oldGenDetector, v -> c.oldGenDetector = v));
+            items.add(new ToggleItem("流体流动辅助检测", () -> c.liquidExploit, v -> c.liquidExploit = v));
+            items.add(new ToggleItem("3D 世界渲染 (默认关闭)", () -> c.render3D, v -> c.render3D = v));
+        } else {
+            items.add(new ToggleItem("本地按服务器/维度保存路径与地形", () -> c.saveToDisk, v -> c.saveToDisk = v));
+            items.add(new ButtonItem("清空当前维度路径与地形缓存", ChunkTrailEngine::clearCurrentData));
+            items.add(new ButtonItem("打开数据文件夹", () -> Util.getPlatform().openPath(TrailsConfig.getBaseDir())));
+        }
     }
 
     @Override
     protected void init() {
-        panelW = Math.min(360, this.width - 24);
-        panelH = Math.min(360, this.height - 24);
+        panelW = Math.min(340, this.width - 24);
+        panelH = Math.min(310, this.height - 24);
         panelX = (this.width - panelW) / 2;
         panelY = (this.height - panelH) / 2;
     }
@@ -111,39 +104,35 @@ public class TrailsSettingsScreen extends Screen {
         g.renderOutline(panelX, panelY, panelW, panelH, BORDER);
         g.fill(panelX, panelY, panelX + panelW, panelY + 2, ACCENT);
 
-        g.drawString(font, "ye-trails", panelX + 14, panelY + 11, ACCENT, false);
-        g.drawString(font, "F7设置 · F8显隐 · O大地图", panelX + 14 + font.width("ye-trails  "), panelY + 11, TEXT_MUTED, false);
+        g.drawString(font, "ye-trails", panelX + 12, panelY + 10, ACCENT, false);
+        g.drawString(font, "F7设置 · F9显隐 · O大地图", panelX + 12 + font.width("ye-trails  "), panelY + 10, TEXT_MUTED, false);
 
         int closeX = panelX + panelW - 24;
-        int closeY = panelY + 7;
+        int closeY = panelY + 6;
         boolean closeHover = inside(mouseX, mouseY, closeX, closeY, 18, 18);
         if (closeHover) g.fill(closeX, closeY, closeX + 18, closeY + 18, 0x33EF4444);
         g.drawString(font, "×", closeX + 6, closeY + 5, closeHover ? 0xFFFCA5A5 : TEXT_MUTED, false);
 
-        g.fill(panelX + 10, panelY + 29, panelX + panelW - 10, panelY + 30, BORDER);
+        // Tabs bar
+        int tabY = panelY + 26;
+        int tabW = (panelW - 24 - 8) / TABS.length;
+        for (int i = 0; i < TABS.length; i++) {
+            int tx = panelX + 12 + i * (tabW + 4);
+            boolean sel = i == activeTab;
+            boolean hov = inside(mouseX, mouseY, tx, tabY, tabW, 20);
+            g.fill(tx, tabY, tx + tabW, tabY + 20, sel ? 0x3322D3EE : (hov ? 0xFF1B2232 : BG_ROW));
+            g.renderOutline(tx, tabY, tabW, 20, sel ? ACCENT : BORDER);
+            int tw = font.width(TABS[i]);
+            g.drawString(font, TABS[i], tx + (tabW - tw) / 2, tabY + 6, sel ? ACCENT : TEXT_MUTED, false);
+        }
 
-        int listTop = panelY + 35;
-        int listBottom = panelY + panelH - 10;
-        int listH = listBottom - listTop;
-
-        int totalH = 0;
-        for (Item item : items) totalH += item.height() + 4;
-        int maxScroll = Math.max(0, totalH - listH);
-        scroll = Math.max(0, Math.min(scroll, maxScroll));
-
-        g.enableScissor(panelX + 8, listTop, panelX + panelW - 8, listBottom);
-        int ry = listTop - scroll;
+        int ry = tabY + 28;
         int rowX = panelX + 12;
         int rowW = panelW - 24;
-
         for (Item item : items) {
-            int h = item.height();
-            if (ry + h >= listTop && ry <= listBottom) {
-                item.render(g, font, rowX, ry, rowW, mouseX, mouseY);
-            }
-            ry += h + 4;
+            item.render(g, font, rowX, ry, rowW, mouseX, mouseY);
+            ry += item.height() + 4;
         }
-        g.disableScissor();
     }
 
     @Override
@@ -151,21 +140,25 @@ public class TrailsSettingsScreen extends Screen {
         double mx = event.x();
         double my = event.y();
 
-        if (inside(mx, my, panelX + panelW - 24, panelY + 7, 18, 18)) {
+        if (inside(mx, my, panelX + panelW - 24, panelY + 6, 18, 18)) {
             onClose();
             return true;
         }
 
-        int listTop = panelY + 35;
-        int listBottom = panelY + panelH - 10;
-        if (!inside(mx, my, panelX + 8, listTop, panelW - 16, listBottom - listTop)) {
-            return super.mouseClicked(event, doubleClick);
+        int tabY = panelY + 26;
+        int tabW = (panelW - 24 - 8) / TABS.length;
+        for (int i = 0; i < TABS.length; i++) {
+            int tx = panelX + 12 + i * (tabW + 4);
+            if (inside(mx, my, tx, tabY, tabW, 20)) {
+                activeTab = i;
+                rebuildTab();
+                return true;
+            }
         }
 
-        int ry = listTop - scroll;
+        int ry = tabY + 28;
         int rowX = panelX + 12;
         int rowW = panelW - 24;
-
         for (Item item : items) {
             int h = item.height();
             if (inside(mx, my, rowX, ry, rowW, h)) {
@@ -198,12 +191,6 @@ public class TrailsSettingsScreen extends Screen {
             TrailsConfig.save();
         }
         return super.mouseReleased(event);
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        scroll += (int) (-scrollY * 18);
-        return true;
     }
 
     @Override
@@ -274,19 +261,19 @@ public class TrailsSettingsScreen extends Screen {
 
     private record SliderItem(String label, DoubleSupplier getter, DoubleConsumer setter,
                               double min, double max, double step) implements Item {
-        @Override public int height() { return 30; }
+        @Override public int height() { return 28; }
 
         @Override
         public void render(GuiGraphics g, net.minecraft.client.gui.Font font, int x, int y, int w, int mouseX, int mouseY) {
-            g.fill(x, y, x + w, y + 30, BG_ROW);
+            g.fill(x, y, x + w, y + 28, BG_ROW);
             double val = getter.getAsDouble();
             String valStr = step >= 1.0 ? String.valueOf((int) Math.round(val)) : String.format(Locale.ROOT, "%.2f", val);
-            g.drawString(font, label, x + 8, y + 5, TEXT_MUTED, false);
-            g.drawString(font, valStr, x + w - font.width(valStr) - 8, y + 5, ACCENT, false);
+            g.drawString(font, label, x + 8, y + 4, TEXT_MUTED, false);
+            g.drawString(font, valStr, x + w - font.width(valStr) - 8, y + 4, ACCENT, false);
 
             int bx = x + 8;
             int bw = w - 16;
-            int by = y + 19;
+            int by = y + 17;
             g.fill(bx, by, bx + bw, by + 4, TOGGLE_OFF);
             double pct = Math.max(0.0, Math.min(1.0, (val - min) / (max - min)));
             int fw = (int) Math.round(bw * pct);

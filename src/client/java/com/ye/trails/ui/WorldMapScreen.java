@@ -16,11 +16,11 @@ import net.minecraft.world.level.ChunkPos;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
-import java.util.Map;
 
 /**
- * Full-screen interactive Xaero-style World Map with terrain, chunk trails,
- * purple portal chunk borders, cursor coordinates, and waypoints (default O).
+ * Lag-free full-screen interactive World Map (default O):
+ * GPU-batched terrain + red new-chunk overlay (old trails stay natural terrain color),
+ * NO chunk grid lines, purple border on portal chunks, cursor coordinates, and waypoints.
  */
 public class WorldMapScreen extends Screen {
     private static final int BG = 0xFF090C12;
@@ -37,7 +37,6 @@ public class WorldMapScreen extends Screen {
     private boolean dragging = false;
     private boolean showWaypointDrawer = false;
 
-    // Add waypoint modal state
     private boolean addingWaypoint = false;
     private int wpX, wpY, wpZ;
     private String wpNameInput = "路径点";
@@ -76,49 +75,36 @@ public class WorldMapScreen extends Screen {
 
         g.enableScissor(0, topH, this.width, this.height - bottomH);
 
-        // 1. Terrain regions
-        if (cfg.showTerrainOnMap) {
-            double regionPxD = TerrainRegionCache.CHUNKS_PER_REGION * pxPerChunk;
-            int regionPx = Math.max(1, (int) Math.round(regionPxD));
-            for (TerrainRegionCache.RegionTile tile : TerrainRegionCache.getRegions()) {
-                int rStartCx = tile.rx * TerrainRegionCache.CHUNKS_PER_REGION;
-                int rStartCz = tile.rz * TerrainRegionCache.CHUNKS_PER_REGION;
-                int sx = (int) Math.round(mapCenterX + (rStartCx - camChunkX) * pxPerChunk);
-                int sz = (int) Math.round(mapCenterY + (rStartCz - camChunkZ) * pxPerChunk);
-                if (sx + regionPx < 0 || sx > this.width || sz + regionPx < topH || sz > this.height - bottomH) {
-                    continue;
-                }
-                tile.uploadIfDirty();
+        // 1 & 2. Batched GPU Region Textures (Terrain + Red New-Chunk Overlay) -> O(regions), zero lag at any zoom!
+        int regionPx = Math.max(1, (int) Math.round(TerrainRegionCache.CHUNKS_PER_REGION * pxPerChunk));
+        for (TerrainRegionCache.RegionTile tile : TerrainRegionCache.getRegions()) {
+            int rStartCx = tile.rx * TerrainRegionCache.CHUNKS_PER_REGION;
+            int rStartCz = tile.rz * TerrainRegionCache.CHUNKS_PER_REGION;
+            int sx = (int) Math.round(mapCenterX + (rStartCx - camChunkX) * pxPerChunk);
+            int sz = (int) Math.round(mapCenterY + (rStartCz - camChunkZ) * pxPerChunk);
+            if (sx + regionPx < 0 || sx > this.width || sz + regionPx < topH || sz > this.height - bottomH) {
+                continue;
+            }
+            tile.uploadIfDirty();
+            if (cfg.showTerrainOnMap) {
                 g.blit(RenderPipelines.GUI_TEXTURED, tile.textureId,
                         sx, sz, 0.0F, 0.0F,
                         regionPx, regionPx,
                         TerrainRegionCache.REGION_PIXELS, TerrainRegionCache.REGION_PIXELS,
                         TerrainRegionCache.REGION_PIXELS, TerrainRegionCache.REGION_PIXELS);
             }
-        }
-
-        // 2. Chunk trail overlay
-        int chunkPx = Math.max(1, (int) Math.ceil(pxPerChunk));
-        for (Map.Entry<Long, ChunkTrailEngine.ChunkType> entry : ChunkTrailEngine.getChunks().entrySet()) {
-            ChunkTrailEngine.ChunkType type = entry.getValue();
-            if (!TrailWorldRenderer.shouldShow(type, cfg)) continue;
-
-            int cx = ChunkPos.getX(entry.getKey());
-            int cz = ChunkPos.getZ(entry.getKey());
-            int sx = (int) Math.floor(mapCenterX + (cx - camChunkX) * pxPerChunk);
-            int sz = (int) Math.floor(mapCenterY + (cz - camChunkZ) * pxPerChunk);
-            if (sx + chunkPx < 0 || sx > this.width || sz + chunkPx < topH || sz > this.height - bottomH) {
-                continue;
+            if (cfg.showNewChunks) {
+                g.blit(RenderPipelines.GUI_TEXTURED, tile.overlayTextureId,
+                        sx, sz, 0.0F, 0.0F,
+                        regionPx, regionPx,
+                        TerrainRegionCache.CHUNKS_PER_REGION, TerrainRegionCache.CHUNKS_PER_REGION,
+                        TerrainRegionCache.CHUNKS_PER_REGION, TerrainRegionCache.CHUNKS_PER_REGION);
             }
-            int alpha = cfg.showTerrainOnMap
-                    ? (type == ChunkTrailEngine.ChunkType.NEW ? 0x3C000000 : 0x6E000000)
-                    : (type == ChunkTrailEngine.ChunkType.NEW ? 0x66000000 : 0xCC000000);
-            g.fill(sx, sz, sx + chunkPx, sz + chunkPx, alpha | TrailWorldRenderer.colorFor(type));
         }
 
-        // 3. Purple border for chunks containing Nether Portals
+        // 3. Purple border ONLY for chunks containing Nether Portals (no general grid lines!)
         if (cfg.highlightPortals) {
-            int borderSize = Math.max(3, chunkPx);
+            int borderSize = Math.max(3, (int) Math.ceil(pxPerChunk));
             for (long packed : ChunkTrailEngine.getPortalChunks()) {
                 int cx = ChunkPos.getX(packed);
                 int cz = ChunkPos.getZ(packed);
@@ -128,9 +114,6 @@ public class WorldMapScreen extends Screen {
                     continue;
                 }
                 g.renderOutline(sx, sz, borderSize, borderSize, 0xFF000000 | TrailWorldRenderer.PORTAL_RGB);
-                if (borderSize >= 8) {
-                    g.renderOutline(sx + 1, sz + 1, borderSize - 2, borderSize - 2, 0xAA000000 | TrailWorldRenderer.PORTAL_RGB);
-                }
             }
         }
 
@@ -184,8 +167,8 @@ public class WorldMapScreen extends Screen {
 
         int bx = 135;
         bx = drawChip(g, bx, 5, "地形", cfg.showTerrainOnMap, mouseX, mouseY);
-        bx = drawChip(g, bx, 5, "路径", cfg.showOldChunks || cfg.showNewChunks, mouseX, mouseY);
-        bx = drawChip(g, bx, 5, "地狱门", cfg.highlightPortals, mouseX, mouseY);
+        bx = drawChip(g, bx, 5, "新区块红标", cfg.showNewChunks, mouseX, mouseY);
+        bx = drawChip(g, bx, 5, "地狱门紫框", cfg.highlightPortals, mouseX, mouseY);
         bx = drawChip(g, bx, 5, "路径点", cfg.showWaypoints, mouseX, mouseY);
         bx = drawChip(g, bx, 5, "回到玩家(C)", false, mouseX, mouseY);
         drawChip(g, bx, 5, "路径点列表", showWaypointDrawer, mouseX, mouseY);
@@ -212,7 +195,6 @@ public class WorldMapScreen extends Screen {
         g.fill(0, by, this.width, this.height, BAR_BG);
         g.fill(0, by, this.width, by + 1, BORDER);
 
-        // Cursor coordinates
         double worldChunkX = camChunkX + (mouseX - mapCenterX) / pxPerChunk;
         double worldChunkZ = camChunkZ + (mouseY - mapCenterY) / pxPerChunk;
         int cursorX = (int) Math.floor(worldChunkX * 16.0);
@@ -222,8 +204,7 @@ public class WorldMapScreen extends Screen {
 
         ChunkTrailEngine.ChunkType type = ChunkTrailEngine.getChunks().get(ChunkPos.asLong(cx, cz));
         String typeLabel = switch (type) {
-            case OLD -> "老路径";
-            case OLD_GEN -> "远古路径";
+            case OLD, OLD_GEN -> "老路径";
             case UPDATING -> "更新中";
             case NEW -> "新区块";
             case null -> "未探测";
@@ -257,10 +238,7 @@ public class WorldMapScreen extends Screen {
             g.fill(dx + 8, ry + 4, dx + 10, ry + 22, wp.enabled ? (wp.color | 0xFF000000) : 0xFF475569);
             g.drawString(font, wp.name, dx + 15, ry + 4, wp.enabled ? TEXT_MAIN : TEXT_MUTED, false);
             g.drawString(font, wp.x + ", " + wp.z, dx + 15, ry + 15, TEXT_MUTED, false);
-
-            // Delete button
-            int delX = dx + dw - 24;
-            g.drawString(font, "×", delX, ry + 9, 0xFFFCA5A5, false);
+            g.drawString(font, "×", dx + dw - 24, ry + 9, 0xFFFCA5A5, false);
             ry += 30;
         }
     }
@@ -274,12 +252,10 @@ public class WorldMapScreen extends Screen {
         g.renderOutline(mx, my, mw, mh, ACCENT);
         g.drawString(font, "添加路径点 (" + wpX + ", " + wpZ + ")", mx + 10, my + 10, TEXT_MAIN, false);
 
-        // Name input box
         g.fill(mx + 10, my + 28, mx + mw - 10, my + 48, 0xFF182030);
         g.renderOutline(mx + 10, my + 28, mw - 20, 20, ACCENT);
         g.drawString(font, wpNameInput + "_", mx + 16, my + 34, TEXT_MAIN, false);
 
-        // Color swatches
         int sx = mx + 10;
         for (int i = 0; i < WaypointManager.PALETTE.length; i++) {
             int c = WaypointManager.PALETTE[i];
@@ -290,7 +266,6 @@ public class WorldMapScreen extends Screen {
             sx += 24;
         }
 
-        // Confirm / Cancel
         int okX = mx + 10, okY = my + 92, btnW = 94, btnH = 22;
         g.fill(okX, okY, okX + btnW, okY + btnH, 0x3322D3EE);
         g.renderOutline(okX, okY, btnW, btnH, ACCENT);
@@ -338,7 +313,6 @@ public class WorldMapScreen extends Screen {
         int topH = 28;
         int bottomH = 22;
 
-        // Top bar buttons
         if (my < topH) {
             if (inside(mx, my, this.width - 24, 5, 18, 18)) {
                 onClose();
@@ -348,15 +322,10 @@ public class WorldMapScreen extends Screen {
             int bx = 135;
             if (hitChip(mx, my, bx, "地形")) { cfg.showTerrainOnMap = !cfg.showTerrainOnMap; TrailsConfig.save(); return true; }
             bx += font.width("地形") + 17;
-            if (hitChip(mx, my, bx, "路径")) {
-                boolean next = !(cfg.showOldChunks || cfg.showNewChunks);
-                cfg.showOldChunks = next; cfg.showOldGenChunks = next; cfg.showUpdatingChunks = next; cfg.showNewChunks = next;
-                TrailsConfig.save();
-                return true;
-            }
-            bx += font.width("路径") + 17;
-            if (hitChip(mx, my, bx, "地狱门")) { cfg.highlightPortals = !cfg.highlightPortals; TrailsConfig.save(); return true; }
-            bx += font.width("地狱门") + 17;
+            if (hitChip(mx, my, bx, "新区块红标")) { cfg.showNewChunks = !cfg.showNewChunks; TrailsConfig.save(); return true; }
+            bx += font.width("新区块红标") + 17;
+            if (hitChip(mx, my, bx, "地狱门紫框")) { cfg.highlightPortals = !cfg.highlightPortals; TrailsConfig.save(); return true; }
+            bx += font.width("地狱门紫框") + 17;
             if (hitChip(mx, my, bx, "路径点")) { cfg.showWaypoints = !cfg.showWaypoints; TrailsConfig.save(); return true; }
             bx += font.width("路径点") + 17;
             if (hitChip(mx, my, bx, "回到玩家(C)")) {
@@ -371,7 +340,6 @@ public class WorldMapScreen extends Screen {
             return true;
         }
 
-        // Waypoint drawer clicks
         if (showWaypointDrawer && mx >= this.width - 185 && my < this.height - bottomH) {
             int dx = this.width - 185;
             int ry = topH + 28;
@@ -392,7 +360,6 @@ public class WorldMapScreen extends Screen {
             return true;
         }
 
-        // Map area clicks
         if (my >= topH && my < this.height - bottomH) {
             if (btn == 1) {
                 int mapH = this.height - topH - bottomH;
@@ -440,7 +407,7 @@ public class WorldMapScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (addingWaypoint) return true;
         double factor = scrollY > 0 ? 1.2 : (1.0 / 1.2);
-        pxPerChunk = Math.max(2.0, Math.min(48.0, pxPerChunk * factor));
+        pxPerChunk = Math.max(1.0, Math.min(48.0, pxPerChunk * factor));
         return true;
     }
 

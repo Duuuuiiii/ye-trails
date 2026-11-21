@@ -25,7 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
- * Caches top-down 16x16 terrain colors per chunk grouped into 16x16-chunk (256x256 px) DynamicTexture regions.
+ * Caches 16x16-chunk regions:
+ * 1) 256x256 terrain texture
+ * 2) 16x16 chunk-trail overlay texture (1 pixel = 1 chunk) for O(1) lag-free WorldMap zooming
  */
 public final class TerrainRegionCache {
     private static final Logger LOGGER = LoggerFactory.getLogger("ye-trails-terrain");
@@ -39,16 +41,28 @@ public final class TerrainRegionCache {
         public final int rx;
         public final int rz;
         public final Identifier textureId;
+        public final Identifier overlayTextureId;
+
         private final NativeImage image;
+        private final NativeImage overlayImage;
         private DynamicTexture texture;
-        private volatile boolean dirty = true;
+        private DynamicTexture overlayTexture;
+        private volatile boolean terrainDirty = true;
+        private volatile boolean overlayDirty = true;
         private volatile boolean diskDirty = false;
 
         RegionTile(int rx, int rz, NativeImage image) {
             this.rx = rx;
             this.rz = rz;
             this.image = image;
+            this.overlayImage = new NativeImage(CHUNKS_PER_REGION, CHUNKS_PER_REGION, true);
+            for (int y = 0; y < CHUNKS_PER_REGION; y++) {
+                for (int x = 0; x < CHUNKS_PER_REGION; x++) {
+                    this.overlayImage.setPixel(x, y, 0x00000000);
+                }
+            }
             this.textureId = Identifier.fromNamespaceAndPath("ye_trails", "region_" + rx + "_" + rz);
+            this.overlayTextureId = Identifier.fromNamespaceAndPath("ye_trails", "overlay_" + rx + "_" + rz);
         }
 
         public synchronized void setChunkPixels(int localCx, int localCz, int[] argb256) {
@@ -59,20 +73,32 @@ public final class TerrainRegionCache {
                     image.setPixel(baseX + x, baseZ + z, argb256[z * 16 + x]);
                 }
             }
-            dirty = true;
+            terrainDirty = true;
             diskDirty = true;
+        }
+
+        public synchronized void setOverlayPixel(int localCx, int localCz, int argb) {
+            overlayImage.setPixel(localCx, localCz, argb);
+            overlayDirty = true;
         }
 
         public synchronized void uploadIfDirty() {
             if (texture == null) {
                 texture = new DynamicTexture(() -> "ye_region_" + rx + "_" + rz, image);
                 Minecraft.getInstance().getTextureManager().register(textureId, texture);
-                dirty = false;
-                return;
-            }
-            if (dirty) {
+                terrainDirty = false;
+            } else if (terrainDirty) {
                 texture.upload();
-                dirty = false;
+                terrainDirty = false;
+            }
+
+            if (overlayTexture == null) {
+                overlayTexture = new DynamicTexture(() -> "ye_overlay_" + rx + "_" + rz, overlayImage);
+                Minecraft.getInstance().getTextureManager().register(overlayTextureId, overlayTexture);
+                overlayDirty = false;
+            } else if (overlayDirty) {
+                overlayTexture.upload();
+                overlayDirty = false;
             }
         }
 
@@ -93,6 +119,12 @@ public final class TerrainRegionCache {
                 texture = null;
             } else {
                 image.close();
+            }
+            if (overlayTexture != null) {
+                overlayTexture.close();
+                overlayTexture = null;
+            } else {
+                overlayImage.close();
             }
         }
     }
@@ -167,6 +199,30 @@ public final class TerrainRegionCache {
         } catch (IOException ignored) {}
     }
 
+    private static RegionTile getOrCreateRegion(int cx, int cz) {
+        int rx = Math.floorDiv(cx, CHUNKS_PER_REGION);
+        int rz = Math.floorDiv(cz, CHUNKS_PER_REGION);
+        return REGIONS.computeIfAbsent(packRegion(rx, rz), k -> {
+            NativeImage img = new NativeImage(REGION_PIXELS, REGION_PIXELS, true);
+            for (int py = 0; py < REGION_PIXELS; py++) {
+                for (int px = 0; px < REGION_PIXELS; px++) {
+                    img.setPixel(px, py, 0x00000000);
+                }
+            }
+            return new RegionTile(rx, rz, img);
+        });
+    }
+
+    public static void updateChunkOverlay(int cx, int cz, ChunkTrailEngine.ChunkType type) {
+        int color = switch (type) {
+            case NEW -> 0x70F43F5E;      // Red for newly generated / untouched chunks
+            case UPDATING -> 0x48FBBF24; // Subtle amber for updating chunks
+            case OLD, OLD_GEN -> 0x00000000; // Transparent = natural terrain color for player trails!
+        };
+        RegionTile tile = getOrCreateRegion(cx, cz);
+        tile.setOverlayPixel(Math.floorMod(cx, CHUNKS_PER_REGION), Math.floorMod(cz, CHUNKS_PER_REGION), color);
+    }
+
     public static void captureChunk(ClientLevel level, LevelChunk chunk) {
         if (level == null || chunk == null) return;
         int cx = chunk.getPos().x;
@@ -184,7 +240,6 @@ public final class TerrainRegionCache {
                 BlockState topState = null;
 
                 if (isNether) {
-                    // Scan below Nether bedrock ceiling (y=122 down to 0) so highways & lava lakes are visible
                     boolean passedCeiling = false;
                     for (int y = Math.min(122, maxY); y >= minY; y--) {
                         pos.set(cx * 16 + x, y, cz * 16 + z);
@@ -232,21 +287,8 @@ public final class TerrainRegionCache {
             }
         }
 
-        int rx = Math.floorDiv(cx, CHUNKS_PER_REGION);
-        int rz = Math.floorDiv(cz, CHUNKS_PER_REGION);
-        int localCx = Math.floorMod(cx, CHUNKS_PER_REGION);
-        int localCz = Math.floorMod(cz, CHUNKS_PER_REGION);
-
-        RegionTile tile = REGIONS.computeIfAbsent(packRegion(rx, rz), k -> {
-            NativeImage img = new NativeImage(REGION_PIXELS, REGION_PIXELS, true);
-            for (int py = 0; py < REGION_PIXELS; py++) {
-                for (int px = 0; px < REGION_PIXELS; px++) {
-                    img.setPixel(px, py, 0x00000000);
-                }
-            }
-            return new RegionTile(rx, rz, img);
-        });
-        tile.setChunkPixels(localCx, localCz, pixels);
+        RegionTile tile = getOrCreateRegion(cx, cz);
+        tile.setChunkPixels(Math.floorMod(cx, CHUNKS_PER_REGION), Math.floorMod(cz, CHUNKS_PER_REGION), pixels);
     }
 
     private static long packRegion(int rx, int rz) {
