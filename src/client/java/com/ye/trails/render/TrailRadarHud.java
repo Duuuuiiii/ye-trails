@@ -78,32 +78,25 @@ public final class TrailRadarHud {
             }
         }
 
-        // 2. Chunk trail overlay
-        for (Map.Entry<Long, ChunkTrailEngine.ChunkType> entry : ChunkTrailEngine.getChunks().entrySet()) {
-            ChunkTrailEngine.ChunkType type = entry.getValue();
-            if (!TrailWorldRenderer.shouldShow(type, cfg)) continue;
-
-            int cx = ChunkPos.getX(entry.getKey());
-            int cz = ChunkPos.getZ(entry.getKey());
-            if (Math.abs(cx - playerCx) > chunkRadius || Math.abs(cz - playerCz) > chunkRadius) continue;
-
-            int px = (int) Math.round(centerX + (cx - playerChunkX) * cell);
-            int py = (int) Math.round(centerY + (cz - playerChunkZ) * cell);
-            int alpha = cfg.showTerrainOnMap
-                    ? (type == ChunkTrailEngine.ChunkType.NEW ? 0x45000000 : 0x7A000000)
-                    : (type == ChunkTrailEngine.ChunkType.NEW ? 0x66000000 : 0xD8000000);
-            g.fill(px, py, px + cell, py + cell, alpha | TrailWorldRenderer.colorFor(type));
-        }
-
-        // 3. Purple border for chunks containing Nether Portals
-        if (cfg.highlightPortals) {
-            for (long packed : ChunkTrailEngine.getPortalChunks()) {
-                int cx = ChunkPos.getX(packed);
-                int cz = ChunkPos.getZ(packed);
-                if (Math.abs(cx - playerCx) > chunkRadius || Math.abs(cz - playerCz) > chunkRadius) continue;
+        // 2. Chunk trail overlay & 3. Purple border for portal chunks (O(visible) grid lookup)
+        Map<Long, ChunkTrailEngine.ChunkType> chunks = ChunkTrailEngine.getChunks();
+        for (int cz = playerCz - chunkRadius; cz <= playerCz + chunkRadius; cz++) {
+            for (int cx = playerCx - chunkRadius; cx <= playerCx + chunkRadius; cx++) {
+                long packed = ChunkPos.asLong(cx, cz);
+                ChunkTrailEngine.ChunkType type = chunks.get(packed);
                 int px = (int) Math.round(centerX + (cx - playerChunkX) * cell);
                 int py = (int) Math.round(centerY + (cz - playerChunkZ) * cell);
-                g.renderOutline(px, py, Math.max(3, cell), Math.max(3, cell), 0xFF000000 | TrailWorldRenderer.PORTAL_RGB);
+
+                if (type != null && TrailWorldRenderer.shouldShow(type, cfg)) {
+                    int alpha = cfg.showTerrainOnMap
+                            ? (type == ChunkTrailEngine.ChunkType.NEW ? 0x38000000 : 0x6E000000)
+                            : (type == ChunkTrailEngine.ChunkType.NEW ? 0x55000000 : 0xCC000000);
+                    g.fill(px, py, px + cell, py + cell, alpha | TrailWorldRenderer.colorFor(type));
+                }
+
+                if (cfg.highlightPortals && ChunkTrailEngine.hasPortal(packed)) {
+                    g.renderOutline(px, py, Math.max(3, cell), Math.max(3, cell), 0xFF000000 | TrailWorldRenderer.PORTAL_RGB);
+                }
             }
         }
 

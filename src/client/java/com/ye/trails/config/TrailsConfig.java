@@ -39,8 +39,8 @@ public final class TrailsConfig {
     public boolean beingUpdatedDetector = true;
     public boolean liquidExploit = true;
 
-    // 3D World Rendering
-    public boolean render3D = true;
+    // 3D World Rendering (off by default — map-first)
+    public boolean render3D = false;
     public boolean followPlayerY = true;
     public double renderY = 64.0;
     public double followYOffset = -2.0;

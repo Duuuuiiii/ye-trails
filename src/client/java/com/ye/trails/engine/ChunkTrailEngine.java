@@ -33,14 +33,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Always-on multi-engine chunk trail detector (PaletteExploit + OldGen + LiquidExploit)
@@ -58,12 +60,18 @@ public final class ChunkTrailEngine {
 
     private static final Map<Long, ChunkType> CHUNK_MAP = new ConcurrentHashMap<>();
     private static final Set<Long> PORTAL_CHUNKS = ConcurrentHashMap.newKeySet();
+    private static final Set<Long> CAPTURED_TERRAIN = ConcurrentHashMap.newKeySet();
 
-    private static final ExecutorService ANALYZER = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "ye-trails-analyzer");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final ExecutorService ANALYZER = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(128),
+            r -> {
+                Thread t = new Thread(r, "ye-trails-analyzer");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.DiscardOldestPolicy()
+    );
     private static final ExecutorService IO_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "ye-trails-io");
         t.setDaemon(true);
@@ -132,6 +140,7 @@ public final class ChunkTrailEngine {
                 activeContextKey = "";
                 CHUNK_MAP.clear();
                 PORTAL_CHUNKS.clear();
+                CAPTURED_TERRAIN.clear();
                 TerrainRegionCache.switchContext("");
                 WaypointManager.switchContext("");
                 recount();
@@ -145,6 +154,7 @@ public final class ChunkTrailEngine {
             activeContextKey = key;
             CHUNK_MAP.clear();
             PORTAL_CHUNKS.clear();
+            CAPTURED_TERRAIN.clear();
             recount();
             TerrainRegionCache.switchContext(key);
             WaypointManager.switchContext(key);
@@ -157,6 +167,7 @@ public final class ChunkTrailEngine {
     public static void clearCurrentData() {
         CHUNK_MAP.clear();
         PORTAL_CHUNKS.clear();
+        CAPTURED_TERRAIN.clear();
         recount();
         TerrainRegionCache.clearCurrent();
 
@@ -205,15 +216,18 @@ public final class ChunkTrailEngine {
                     copyBuf.release();
                 }
 
-                // Capture 16x16 terrain tile for map & minimap
-                TerrainRegionCache.captureChunk(mc.level, tempChunk);
+                long packed = ChunkPos.asLong(cx, cz);
+
+                // Capture 16x16 terrain tile once per session for map & minimap
+                if (CAPTURED_TERRAIN.add(packed)) {
+                    TerrainRegionCache.captureChunk(mc.level, tempChunk);
+                }
 
                 // Scan for Nether Portals
                 if (containsPortal(tempChunk)) {
                     recordPortal(cx, cz, cfg.saveToDisk);
                 }
 
-                long packed = ChunkPos.asLong(cx, cz);
                 if (!CHUNK_MAP.containsKey(packed)) {
                     ChunkType detected = analyzeChunk(mc.level, tempChunk, cfg);
                     if (detected != null) {
@@ -366,15 +380,18 @@ public final class ChunkTrailEngine {
                     int paletteSize = palette.getSize();
 
                     if (palette instanceof HashMapPalette<BlockState>) {
-                        Set<BlockState> unique = new HashSet<>();
-                        for (int x = 0; x < 16; x++) {
-                            for (int y = 0; y < 16; y++) {
-                                for (int z = 0; z < 16; z++) {
-                                    unique.add(container.get(x, y, z));
-                                }
+                        var storage = ((PaletteAccess<BlockState>) container).ye$getStorage();
+                        boolean[] seen = new boolean[paletteSize];
+                        int uniqueSize = 0;
+                        int total = storage.getSize();
+                        for (int idx = 0; idx < total; idx++) {
+                            int id = storage.get(idx);
+                            if (id >= 0 && id < paletteSize && !seen[id]) {
+                                seen[id] = true;
+                                uniqueSize++;
+                                if (uniqueSize >= paletteSize) break;
                             }
                         }
-                        int uniqueSize = unique.size();
                         if (uniqueSize <= 1) uniqueSize = paletteSize;
                         if (uniqueSize < paletteSize) {
                             isNewSection = 2;

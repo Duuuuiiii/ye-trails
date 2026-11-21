@@ -1,6 +1,7 @@
 package com.ye.trails.mixin;
 
 import com.ye.trails.engine.PaletteAccess;
+import net.minecraft.util.BitStorage;
 import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -14,5 +15,10 @@ public abstract class PalettedContainerMixin<T> implements PaletteAccess<T> {
     @Override
     public Palette<T> ye$getPalette() {
         return this.data.palette();
+    }
+
+    @Override
+    public BitStorage ye$getStorage() {
+        return this.data.storage();
     }
 }
